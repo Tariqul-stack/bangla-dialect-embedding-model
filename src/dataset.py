@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from data_preprocessing import load_excel_dataset, flatten_to_samples
+from src.data_preprocessing import load_excel_dataset, flatten_to_samples
 
 
 # Label → integer mapping for all 8 dialects
