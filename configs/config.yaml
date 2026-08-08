@@ -2,17 +2,22 @@ model:
   hidden_dim: 256
   num_layers: 4
   dropout: 0.1
+  vocab_size: 32000
 
 training:
   batch_size: 32
   learning_rate: 1e-4
   epochs: 10
   seed: 42
+  margin: 1.0
+  weight_decay: 0.01
+  checkpoint_dir: "checkpoints"
 
 data:
-  train_path: data/processed/train.txt
-  val_path: data/processed/val.txt
+  excel_path: "data/raw/Local_Language_Dataset.xlsx"
   max_seq_len: 128
+  train_ratio: 0.8
+  val_ratio: 0.1
 
 tokenizer:
   name: "sagorsarker/bangla-bert-base"
