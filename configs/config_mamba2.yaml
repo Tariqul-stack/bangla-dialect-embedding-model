@@ -1,0 +1,57 @@
+# configs/config_mamba2.yaml
+# ─────────────────────────────────────────
+# Mamba2 experiment configuration
+# Run: python src/train.py --config configs/config_mamba2.yaml
+
+experiment:
+  name: "bangla_dialect_mamba2"
+  architecture: "mamba2"           # label for results/logging
+
+# ── Model ───────────────────────────────
+model:
+  vocab_size: 101975               # BanglaBERT vocab size
+  d_model: 256                     # internal model dimension
+  n_layers: 4                      # number of Mamba2 blocks
+  embed_dim: 128                   # output embedding dimension
+  d_state: 64                      # SSM state expansion (Mamba2 default)
+  d_conv: 4                        # causal conv kernel size
+  expand: 2                        # inner-dim expansion factor
+  headdim: 64                      # SSD head dimension (d_inner / nheads)
+  dropout: 0.1
+  max_seq_len: 512
+  pad_token_id: 0
+
+# ── Training ────────────────────────────
+training:
+  batch_size: 32                   # safe for T4 16GB with d_model=256
+  epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  grad_clip: 1.0
+  temperature: 0.07                # NT-Xent contrastive temperature
+
+# ── Scheduler ───────────────────────────
+scheduler:
+  type: "cosine"
+  T_max: 30                        # match epochs
+  eta_min: 1.0e-6
+
+# ── Data ────────────────────────────────
+data:
+  path: "data/raw/Local_Language_Dataset.xlsx"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+  num_workers: 2
+
+# ── Checkpointing ───────────────────────
+checkpoint:
+  save_dir: "checkpoints/mamba2"
+  save_best: true
+  metric: "val_loss"               # lower is better
+
+# ── Results ─────────────────────────────
+results:
+  output_file: "results/mamba2_results.md"
+  log_interval: 10                 # log every N batches
