@@ -78,7 +78,7 @@ def train():
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # 6. Loss & Optimizer
-    criterion = ContrastiveLoss(margin=config["training"].get("margin", 1.0))
+    criterion = ContrastiveLoss(temperature=config["training"].get("temperature", 0.07))
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr           = config["training"]["learning_rate"],
