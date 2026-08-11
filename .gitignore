@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Model weights
+checkpoints/
+*.pt
+*.pth
+*.bin
+
+# Data files 
+# data/raw/
+
+# Jupyter / Kaggle notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# results/
