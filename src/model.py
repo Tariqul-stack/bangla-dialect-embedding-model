@@ -447,6 +447,48 @@ class ContrastiveLoss(nn.Module):
         loss = F.cross_entropy(sim, labels)
         return loss
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TripletLoss Function
+# ─────────────────────────────────────────────────────────────────────────────
+class TripletLoss(nn.Module):
+    """
+    Triplet Loss — NT-Xent এর alternative।
+    Ablation study তে compare করার জন্য।
+    
+    Loss = max(0, pos_dist - neg_dist + margin)
+    
+    pos_dist = anchor আর positive এর দূরত্ব
+    neg_dist = anchor আর negative এর দূরত্ব
+    margin   = minimum gap যেটা enforce করা হয়
+    """
+    
+    def __init__(self, margin: float = 1.0):
+        super().__init__()
+        self.margin = margin
+
+    def forward(
+        self,
+        anchor: torch.Tensor,    # (B, D) dialect embedding
+        positive: torch.Tensor,  # (B, D) standard embedding
+        negative: torch.Tensor = None,  # (B, D) random negative
+    ) -> torch.Tensor:
+        
+        # Cosine distance = 1 - cosine similarity
+        pos_sim = F.cosine_similarity(anchor, positive, dim=-1)
+        pos_dist = 1 - pos_sim  # (B,)
+
+        if negative is None:
+            # Negative automatically বানাও
+            # Batch কে shift করো → আলাদা sentence পাবো
+            idx = torch.randperm(anchor.size(0), device=anchor.device)
+            negative = positive[idx]
+
+        neg_sim = F.cosine_similarity(anchor, negative, dim=-1)
+        neg_dist = 1 - neg_sim  # (B,)
+
+        # Triplet loss
+        loss = torch.clamp(pos_dist - neg_dist + self.margin, min=0.0)
+        return loss.mean()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model factory — easy config switching for Mamba2 vs Mamba3 experiments

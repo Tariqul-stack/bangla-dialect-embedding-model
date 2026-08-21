@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from src.dataset import build_dataloaders
 from src.tokenizer import get_tokenizer
-from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss
+from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss, TripletLoss
 
 
 # ──────────────────────────────────────────────
@@ -89,8 +89,13 @@ def train():
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # 6. Loss & Optimizer
-    criterion = ContrastiveLoss(temperature=config["training"].get("temperature", 0.07))
-    optimizer = torch.optim.AdamW(
+    loss_type = config["training"].get("loss", "nt_xent")
+
+    if loss_type == "triplet":
+        criterion = TripletLoss(margin=config["training"].get("margin", 1.0))
+    else:
+        criterion = ContrastiveLoss(temperature=config["training"].get("temperature", 0.07))
+        optimizer = torch.optim.AdamW(
         model.parameters(),
         lr           = config["training"]["learning_rate"],
         weight_decay = config["training"].get("weight_decay", 1e-2),
