@@ -95,7 +95,8 @@ def train():
         criterion = TripletLoss(margin=config["training"].get("margin", 1.0))
     else:
         criterion = ContrastiveLoss(temperature=config["training"].get("temperature", 0.07))
-        optimizer = torch.optim.AdamW(
+
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr           = config["training"]["learning_rate"],
         weight_decay = config["training"].get("weight_decay", 1e-2),
