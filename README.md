@@ -1,15 +1,16 @@
 # Bangla Dialect Embedding Model
 
-A dialect-aware Bangla embedding model using Mamba2 SSM architecture with contrastive learning, developed at the Edge Intelligence Lab.
+A dialect-aware Bangla embedding model using Mamba2/Mamba3 SSM architecture with contrastive learning, developed at the Edge Intelligence Lab.
 
 ## Project Overview
 
-This project builds a dialect-aware embedding model for Bangla using Mamba2 (State Space Model) architecture. The model captures dialectal variations across 8 Bangla dialects and produces high-quality embeddings using contrastive learning.
+This project builds a dialect-aware embedding model for Bangla using Mamba2 and Mamba3 (State Space Model) architectures. The model captures dialectal variations across 8 Bangla dialects and produces high-quality embeddings using contrastive learning.
 
 **Novelty:**
-- First application of Mamba2 architecture to Bangla dialect embedding
+- First application of Mamba2/Mamba3 architecture to Bangla dialect embedding
 - Covers 8 dialects simultaneously (most prior work covers 2-3)
-- Parallel corpus + NT-Xent contrastive learning for embedding (not classification)
+- Parallel corpus + contrastive learning for embedding (not classification)
+- Config-driven architecture switching (Mamba2/Mamba3) and loss selection (NT-Xent/Triplet)
 
 **Dialects covered:** Standard, Rajshahi, Sylheti, Chittagong, Rangpur, Mymensingh, Barishal, Rakhain
 
@@ -19,18 +20,19 @@ This project builds a dialect-aware embedding model for Bangla using Mamba2 (Sta
 bangla-dialect-embedding-model/
 ├── data/
 │ └── raw/
-│ └── Local_Language_Dataset.xlsx # Parallel dialect corpus (3452 sentences × 8 dialects)
+│ └── Local_Language_Dataset.xlsx
 ├── src/
-│ ├── dataset.py # Dialect-aware PyTorch Dataset + DataLoader
-│ ├── data_preprocessing.py # Excel loading, cleaning, flattening
-│ ├── tokenizer.py # BanglaBERT tokenizer wrapper
-│ ├── model.py # Mamba2 SSM model + NT-Xent Contrastive Loss
-│ └── train.py # Training loop with validation + checkpointing
+│ ├── dataset.py
+│ ├── data_preprocessing.py
+│ ├── tokenizer.py
+│ ├── model.py
+│ └── train.py
 ├── configs/
-│ ├── config.yaml # Main experiment config
-│ └── config_mamba2.yaml # Mamba2 full experiment config
+│ ├── config.yaml
+│ └── config_mamba2.yaml
 ├── evaluate/
-│ └── eval.py # Cosine similarity evaluation + per-dialect breakdown
+│ └── eval.py
+├── results.md
 ├── requirements.txt
 └── README.md
 ```
@@ -40,8 +42,8 @@ bangla-dialect-embedding-model/
 - **Data**: Parallel Bangla dialect corpus — 3,452 sentences × 8 dialects (7,703 total samples)
 - **Preprocessing**: Unicode NFC normalization, Bangla character filtering
 - **Tokenizer**: BanglaBERT (`sagorsarker/bangla-bert-base`) — vocab size: 101,975
-- **Model**: Mamba2 SSM architecture (pure-PyTorch fallback for environments without CUDA extension)
-- **Loss**: NT-Xent (SimCLR) contrastive loss — temperature=0.07
+- **Model**: Mamba2/Mamba3 SSM architecture (pure-PyTorch fallback)
+- **Loss**: NT-Xent (SimCLR) or Triplet Loss — config-driven
 - **Training**: AdamW optimizer + Cosine LR scheduler + gradient clipping
 
 ## Setup
@@ -53,7 +55,12 @@ pip install -r requirements.txt
 ## Run Training
 
 ```bash
+# Mamba2 + NT-Xent (default)
 python -m src.train
+
+# Switch architecture or loss in configs/config.yaml:
+# model.architecture: "mamba2" or "mamba3"
+# training.loss: "nt_xent" or "triplet"
 ```
 
 ## Run Evaluation
@@ -62,51 +69,44 @@ python -m src.train
 python evaluate/eval.py
 ```
 
-## Results
+## Results Summary
 
-### Experiment 1: SSM Placeholder (Baseline)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.9555 |
-| Negative Similarity | 0.4711 |
-| Similarity Gap | 0.4843 |
-| Best Val Loss | 0.1495 |
+| Experiment | Gap | Val Loss |
+|------------|-----|----------|
+| SSM Placeholder (Baseline) | 0.4843 | 0.1495 |
+| Mamba2 + NT-Xent (30ep) | 0.8086 | 0.3816 |
+| Mamba2 + Triplet (30ep) | 0.8873 | 0.2452 |
+| Mamba3 + Triplet (30ep) | 0.8886 | 0.2440 |
 
-### Experiment 2: Mamba2 Fallback (Pure PyTorch, 10 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.7919 |
-| Negative Similarity | -0.0030 |
-| Similarity Gap | 0.7949 |
-| Best Val Loss | 0.4512 |
+Full results in [results.md](results.md)
 
-### Per-dialect Similarity (Mamba2 Fallback)
-| Dialect | Similarity |
-|---------|------------|
-| Standard | 1.0000 |
-| Barishal | 0.7286 |
-| Sylheti | 0.6902 |
-| Mymensingh | 0.6837 |
-| Chittagong | 0.6719 |
-| Rangpur | 0.5802 |
-| Rajshahi | 0.5759 |
-| Rakhain | 0.1608 |
+## Key Findings
+
+- Mamba2/Mamba3 outperforms SSM placeholder by +83% similarity gap
+- Triplet Loss outperforms NT-Xent on current small dataset
+- Mamba3 achieves marginally better gap (0.8886) with better negative separation
+- Mamba3 is ~60% slower per epoch than Mamba2
+- Rakhain dialect scores lowest due to linguistic distance from Standard Bangla
 
 ## Status
 
-- [x] Project structure
 - [x] Parallel dialect dataset (3,452 sentences × 8 dialects)
 - [x] Data preprocessing pipeline
-- [x] Dialect-aware Dataset class with dialect labels
-- [x] Train / Val / Test split (80/10/10)
 - [x] BanglaBERT tokenizer
-- [x] Mamba2 SSM architecture (with pure-PyTorch fallback)
+- [x] Mamba2 SSM architecture (pure-PyTorch fallback)
+- [x] Mamba3 SSM architecture (complex-valued states, BCNorm, ET discretization)
 - [x] NT-Xent contrastive loss
+- [x] Triplet Loss (ablation)
+- [x] Config-driven architecture + loss selection
 - [x] Training loop with validation + checkpointing
 - [x] Cosine similarity evaluation + per-dialect breakdown
-- [ ] Real Mamba2 CUDA kernel integration
-- [ ] 30 epoch full training run
-- [ ] Mamba3 experiment
+- [x] Ablation study (NT-Xent vs Triplet)
+- [x] Architecture comparison (Mamba2 vs Mamba3)
+- [ ] Mamba1 baseline experiment
+- [ ] BanglaBERT baseline experiment
+- [ ] Real Mamba2/Mamba3 CUDA kernel (RunPod A100)
+- [ ] New dataset integration
+- [ ] Paper writing
 
 ## Lab
 
