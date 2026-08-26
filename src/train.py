@@ -85,6 +85,7 @@ def train():
         expand      = model_cfg.get('expand', 2),
         headdim     = model_cfg.get('headdim', 64),
         dropout     = model_cfg.get('dropout', 0.1),
+        architecture = model_cfg.get('architecture', 'mamba2'),
     ).to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 

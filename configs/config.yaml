@@ -8,6 +8,7 @@ model:
   expand: 2
   headdim: 64
   dropout: 0.1
+  architecture: "mamba2"
 
 training:
   batch_size: 16

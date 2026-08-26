@@ -147,7 +147,7 @@ def evaluate():
         seed        = config["training"]["seed"],
     )
 
-    # Load model
+    
     # Load model
     model_cfg = config.get('model', {})
     model = BanglaDialectEmbeddingModel(
@@ -160,6 +160,7 @@ def evaluate():
         expand      = model_cfg.get('expand', 2),
         headdim     = model_cfg.get('headdim', 64),
         dropout     = model_cfg.get('dropout', 0.1),
+        architecture = model_cfg.get('architecture', 'mamba2'),
     ).to(device)
     ckpt_path = config["training"].get("checkpoint_dir", "checkpoints") + "/best_model.pt"
 

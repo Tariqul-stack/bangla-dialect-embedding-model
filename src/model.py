@@ -167,7 +167,172 @@ class Mamba2Fallback(nn.Module):
         y = self.out_proj(y)
         return y
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure-PyTorch Mamba3 Fallback
+# ─────────────────────────────────────────────────────────────────────────────
+class Mamba3Fallback(nn.Module):
+    """
+    Pure-PyTorch Mamba3 implementation.
 
+    Key differences from Mamba2:
+    1. Complex-valued states (more expressive)
+    2. Exponential-trapezoidal (ET) discretization
+    3. BCNorm — normalizes B and C projections
+    4. Inference-optimized design
+
+    Args:
+        d_model  : model dimension
+        d_state  : SSM state size (default 64)
+        d_conv   : depthwise conv kernel size (default 4)
+        expand   : expansion factor (default 2)
+        headdim  : head dimension (default 64)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        d_state: int = 64,
+        d_conv: int = 4,
+        expand: int = 2,
+        headdim: int = 64,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state
+        self.d_conv = d_conv
+        self.expand = expand
+        self.d_inner = int(expand * d_model)
+        self.headdim = headdim
+        self.nheads = max(1, self.d_inner // headdim)
+
+        # Input projection → x_ssm + gate
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+
+        # Depthwise causal conv
+        self.conv1d = nn.Conv1d(
+            in_channels=self.d_inner,
+            out_channels=self.d_inner,
+            kernel_size=d_conv,
+            padding=d_conv - 1,
+            groups=self.d_inner,
+            bias=True,
+        )
+
+        # SSM projections
+        dt_rank = math.ceil(d_model / 16)
+        self.dt_rank = dt_rank
+
+        # Mamba3: B and C project to complex states
+        # d_state * 2 because complex = real + imaginary
+        self.x_proj = nn.Linear(
+            self.d_inner,
+            dt_rank + d_state * 2 * 2,  # dt + B(real+imag) + C(real+imag)
+            bias=False
+        )
+
+        self.dt_proj = nn.Linear(dt_rank, self.d_inner, bias=True)
+
+        # Log-parameterised A (complex diagonal)
+        A_real = torch.arange(1, d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
+        self.A_log = nn.Parameter(torch.log(A_real))
+
+        # Mamba3: A imaginary part (new!)
+        self.A_imag = nn.Parameter(torch.zeros(self.d_inner, d_state))
+
+        # D skip connection
+        self.D = nn.Parameter(torch.ones(self.d_inner))
+
+        # Mamba3: BCNorm — normalize B and C (new!)
+        self.B_norm = nn.LayerNorm(d_state)
+        self.C_norm = nn.LayerNorm(d_state)
+
+        # Output projection
+        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+        self.norm = nn.LayerNorm(self.d_inner)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, L, D)
+        Returns:
+            y: (B, L, D)
+        """
+        B, L, D = x.shape
+
+        # 1. Input projection
+        xz = self.in_proj(x)                           # (B, L, 2*d_inner)
+        x_in, z = xz.chunk(2, dim=-1)                 # each (B, L, d_inner)
+
+        # 2. Causal conv1d
+        x_conv = x_in.transpose(1, 2)                 # (B, d_inner, L)
+        x_conv = self.conv1d(x_conv)[..., :L]         # causal trim
+        x_conv = F.silu(x_conv).transpose(1, 2)       # (B, L, d_inner)
+
+        # 3. Project to dt, B, C (complex)
+        x_dbl = self.x_proj(x_conv)
+        dt, B_real, B_imag, C_real, C_imag = torch.split(
+            x_dbl,
+            [self.dt_rank, self.d_state, self.d_state,
+             self.d_state, self.d_state],
+            dim=-1
+        )
+        dt = F.softplus(self.dt_proj(dt))              # (B, L, d_inner)
+
+        # Mamba3: BCNorm — normalize B and C
+        B_real = self.B_norm(B_real)
+        C_real = self.C_norm(C_real)
+
+        # 4. Complex A matrix
+        # Mamba3: A = -exp(A_log) + i*A_imag
+        A_real = -torch.exp(self.A_log.float())        # (d_inner, d_state)
+        A_imag = self.A_imag.float()                   # (d_inner, d_state)
+
+        # 5. Exponential-trapezoidal discretization (Mamba3 key innovation)
+        # ET discretization: more stable than ZOH for complex states
+        # A_bar = exp((A_real + i*A_imag) * dt)
+        dt_expanded = torch.einsum('bld,ds->blds', dt, torch.ones_like(A_real))
+        A_real_bar = torch.exp(
+            torch.einsum('bld,ds->blds', dt, A_real)
+        )
+        A_imag_bar = torch.einsum('bld,ds->blds', dt, A_imag)
+
+        # 6. Complex state computation
+        # B_bar (complex input gate)
+        B_bar_real = torch.einsum('bld,bls->blds', dt, B_real)
+        B_bar_imag = torch.einsum('bld,bls->blds', dt, B_imag)
+
+        u = x_conv                                      # (B, L, d_inner)
+        Bu_real = torch.einsum('bld,blds->blds', u, B_bar_real)
+        Bu_imag = torch.einsum('bld,blds->blds', u, B_bar_imag)
+
+        # 7. Parallel scan with complex states
+        # Real part of scan
+        log_A_cumsum = torch.cumsum(
+            torch.log(A_real_bar.clamp(min=1e-8)), dim=1
+        )
+        A_cumprod = torch.exp(log_A_cumsum)
+
+        Bu_norm_real = Bu_real / A_cumprod.clamp(min=1e-8)
+        h_real = torch.cumsum(Bu_norm_real, dim=1) * A_cumprod
+
+        # Imaginary part modulation
+        A_imag_cumsum = torch.cumsum(A_imag_bar, dim=1)
+        h_imag = h_real * torch.sin(A_imag_cumsum) + \
+                 Bu_imag * torch.cos(A_imag_cumsum)
+
+        # 8. Output: combine real and imaginary
+        # y = C_real * h_real + C_imag * h_imag
+        y = torch.einsum('bls,blds->bld', C_real, h_real) + \
+            torch.einsum('bls,blds->bld', C_imag, h_imag)
+
+        # D skip connection
+        y = y + self.D.unsqueeze(0).unsqueeze(0) * u
+
+        # 9. Gate + output projection
+        y = y * F.silu(z)
+        y = self.out_proj(y)
+        return y
+    
 # ─────────────────────────────────────────────────────────────────────────────
 # Mamba2 Block (residual + norm wrapper)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +393,48 @@ class Mamba2Block(nn.Module):
         """x: (B, L, D) → (B, L, D)"""
         return x + self.dropout(self.ssm(self.norm(x)))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Mamba3 Block (residual + norm wrapper)
+# ─────────────────────────────────────────────────────────────────────────────
+class Mamba3Block(nn.Module):
+    """
+    Pre-norm residual block wrapping Mamba3Fallback.
+
+    Architecture:
+        y = x + Dropout(Mamba3(LayerNorm(x)))
+
+    Args:
+        d_model  : model dimension
+        d_state  : SSM state size (default 64)
+        d_conv   : causal conv kernel (default 4)
+        expand   : expansion factor (default 2)
+        headdim  : head dimension (default 64)
+        dropout  : dropout rate (default 0.1)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        d_state: int = 64,
+        d_conv: int = 4,
+        expand: int = 2,
+        headdim: int = 64,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.ssm = Mamba3Fallback(
+            d_model=d_model,
+            d_state=d_state,
+            d_conv=d_conv,
+            expand=expand,
+            headdim=headdim,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, L, D) → (B, L, D)"""
+        return x + self.dropout(self.ssm(self.norm(x)))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Projection Head
@@ -281,19 +488,24 @@ class BanglaDialectEmbeddingModel(nn.Module):
     """
 
     def __init__(
-        self,
-        vocab_size: int = 101_975,
-        d_model: int = 256,
-        n_layers: int = 4,
-        embed_dim: int = 128,
-        d_state: int = 64,
-        d_conv: int = 4,
-        expand: int = 2,
-        headdim: int = 64,
-        dropout: float = 0.1,
-        max_seq_len: int = 512,
-        pad_token_id: int = 0,
-    ):
+    self,
+    vocab_size: int = 101_975,
+    d_model: int = 256,
+    n_layers: int = 4,
+    embed_dim: int = 128,
+    d_state: int = 64,
+    d_conv: int = 4,
+    expand: int = 2,
+    headdim: int = 64,
+    dropout: float = 0.1,
+    max_seq_len: int = 512,
+    pad_token_id: int = 0,
+    architecture: str = "mamba2",   
+):
+        super().__init__()
+        self.pad_token_id = pad_token_id
+        self.d_model = d_model
+        self.architecture = architecture  
         super().__init__()
         self.pad_token_id = pad_token_id
         self.d_model = d_model
@@ -304,18 +516,19 @@ class BanglaDialectEmbeddingModel(nn.Module):
         self.emb_dropout = nn.Dropout(dropout)
         self.emb_norm = nn.LayerNorm(d_model)
 
-        # Mamba2 blocks
+        # SSM blocks — Mamba2 or Mamba3
+        block_class = Mamba3Block if architecture == "mamba3" else Mamba2Block
         self.blocks = nn.ModuleList([
-            Mamba2Block(
-                d_model=d_model,
-                d_state=d_state,
-                d_conv=d_conv,
-                expand=expand,
-                headdim=headdim,
-                dropout=dropout,
-            )
-            for _ in range(n_layers)
-        ])
+        block_class(
+        d_model=d_model,
+        d_state=d_state,
+        d_conv=d_conv,
+        expand=expand,
+        headdim=headdim,
+        dropout=dropout,
+    )
+    for _ in range(n_layers)
+])
 
         # Final layer norm before pooling
         self.final_norm = nn.LayerNorm(d_model)
@@ -514,6 +727,7 @@ def build_model(config: dict) -> BanglaDialectEmbeddingModel:
         dropout=config.get("dropout", 0.1),
         max_seq_len=config.get("max_seq_len", 512),
         pad_token_id=config.get("pad_token_id", 0),
+        architecture=config.get("architecture", "mamba2"),
     )
 
 
