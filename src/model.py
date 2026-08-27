@@ -926,6 +926,86 @@ class BanglaBERTBaseline(nn.Module):
         return F.normalize(out, p=2, dim=-1)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Gemma2 Baseline
+# ─────────────────────────────────────────────────────────────────────────────
+class Gemma2Baseline(nn.Module):
+    """
+    Gemma2-2B Baseline for comparison with Mamba architectures.
+
+    Uses frozen Gemma2 to extract mean-pooled embeddings,
+    then trains a Projection Head with contrastive loss.
+
+    Args:
+        embed_dim    : output embedding dimension (default 128)
+        dropout      : dropout rate (default 0.1)
+        freeze_gemma : freeze Gemma2 weights (default True)
+        model_name   : HuggingFace model name
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 128,
+        dropout: float = 0.1,
+        freeze_gemma: bool = True,
+        model_name: str = "google/gemma-2-2b",
+    ):
+        super().__init__()
+
+        from transformers import AutoModel
+        self.gemma = AutoModel.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,  # memory save
+        )
+
+        # Freeze Gemma2 weights
+        if freeze_gemma:
+            for param in self.gemma.parameters():
+                param.requires_grad = False
+
+        gemma_hidden = 2304  # Gemma2-2B hidden size
+
+        # Projection Head
+        self.proj = nn.Sequential(
+            nn.Linear(gemma_hidden, gemma_hidden // 2),
+            nn.GELU(),
+            nn.LayerNorm(gemma_hidden // 2),
+            nn.Dropout(dropout),
+            nn.Linear(gemma_hidden // 2, embed_dim),
+        )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            input_ids     : (B, L)
+            attention_mask: (B, L)
+        Returns:
+            embeddings: (B, embed_dim) L2-normalized
+        """
+        with torch.no_grad():
+            outputs = self.gemma(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+
+        # Mean pooling (Gemma2 এ CLS token নেই)
+        hidden = outputs.last_hidden_state  # (B, L, H)
+        if attention_mask is not None:
+            mask = attention_mask.float().unsqueeze(-1)
+            summed = (hidden.float() * mask).sum(dim=1)
+            lengths = mask.sum(dim=1).clamp(min=1e-9)
+            pooled = summed / lengths
+        else:
+            pooled = hidden.float().mean(dim=1)
+
+        # Project to embed_dim
+        out = self.proj(pooled)
+        return F.normalize(out, p=2, dim=-1)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Model factory — easy config switching for Mamba2 vs Mamba3 experiments
 # ─────────────────────────────────────────────────────────────────────────────
 def build_model(config: dict) -> BanglaDialectEmbeddingModel:

@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.dataset import build_dataloaders
 from src.tokenizer import get_tokenizer
-from src.model import BanglaDialectEmbeddingModel, BanglaBERTBaseline
+from src.model import BanglaDialectEmbeddingModel, BanglaBERTBaseline, Gemma2Baseline
 
 
 # ──────────────────────────────────────────────
@@ -158,6 +158,13 @@ def evaluate():
             dropout     = model_cfg.get('dropout', 0.1),
             freeze_bert = model_cfg.get('freeze_bert', True),
         ).to(device)
+    elif architecture == 'gemma2':
+        model = Gemma2Baseline(
+            embed_dim    = model_cfg.get('embed_dim', 128),
+            dropout      = model_cfg.get('dropout', 0.1),
+            freeze_gemma = model_cfg.get('freeze_gemma', True),
+            model_name   = model_cfg.get('gemma_model', 'google/gemma-2-2b'),
+        ).to(device)
     else:
         model = BanglaDialectEmbeddingModel(
             vocab_size   = model_cfg.get('vocab_size', 101975),
@@ -172,7 +179,6 @@ def evaluate():
             architecture = architecture,
         ).to(device)
     ckpt_path = config["training"].get("checkpoint_dir", "checkpoints") + "/best_model.pt"
-
     if not os.path.exists(ckpt_path):
         print(f"Checkpoint not found: {ckpt_path}")
         return

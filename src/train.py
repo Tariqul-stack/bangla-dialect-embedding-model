@@ -5,8 +5,7 @@ from tqdm import tqdm
 
 from src.dataset import build_dataloaders
 from src.tokenizer import get_tokenizer
-from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss, TripletLoss, BanglaBERTBaseline
-
+from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss, TripletLoss, BanglaBERTBaseline, Gemma2Baseline
 
 # ──────────────────────────────────────────────
 # Config loader
@@ -82,6 +81,13 @@ def train():
             embed_dim   = model_cfg.get('embed_dim', 128),
             dropout     = model_cfg.get('dropout', 0.1),
             freeze_bert = model_cfg.get('freeze_bert', True),
+        ).to(device)
+    elif architecture == 'gemma2':
+        model = Gemma2Baseline(
+            embed_dim    = model_cfg.get('embed_dim', 128),
+            dropout      = model_cfg.get('dropout', 0.1),
+            freeze_gemma = model_cfg.get('freeze_gemma', True),
+            model_name   = model_cfg.get('gemma_model', 'google/gemma-2-2b'),
         ).to(device)
     else:
         model = BanglaDialectEmbeddingModel(

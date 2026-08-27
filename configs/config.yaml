@@ -9,7 +9,9 @@ model:
   headdim: 64
   dropout: 0.1
   architecture: "mamba2"
-  freeze_bert: true        
+  freeze_bert: true       
+  freeze_gemma: true          
+  gemma_model: "google/gemma-2-2b"  
 
 training:
   batch_size: 16
