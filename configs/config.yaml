@@ -9,6 +9,7 @@ model:
   headdim: 64
   dropout: 0.1
   architecture: "mamba2"
+  freeze_bert: true        
 
 training:
   batch_size: 16

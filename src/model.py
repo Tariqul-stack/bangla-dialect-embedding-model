@@ -852,6 +852,80 @@ class TripletLoss(nn.Module):
         return loss.mean()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BanglaBERT Baseline
+# ─────────────────────────────────────────────────────────────────────────────
+class BanglaBERTBaseline(nn.Module):
+    """
+    BanglaBERT Baseline for comparison with Mamba architectures.
+
+    Uses frozen BanglaBERT to extract CLS token embeddings,
+    then trains a Projection Head with contrastive loss.
+
+    This is a fair comparison because:
+    - Same training data
+    - Same loss function
+    - Same evaluation metrics
+    - Only architecture differs (Transformer vs SSM)
+
+    Args:
+        embed_dim   : output embedding dimension (default 128)
+        dropout     : dropout rate (default 0.1)
+        freeze_bert : freeze BanglaBERT weights (default True)
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 128,
+        dropout: float = 0.1,
+        freeze_bert: bool = True,
+    ):
+        super().__init__()
+
+        from transformers import AutoModel
+        self.bert = AutoModel.from_pretrained("sagorsarker/bangla-bert-base")
+
+        # Freeze BanglaBERT weights
+        if freeze_bert:
+            for param in self.bert.parameters():
+                param.requires_grad = False
+
+        bert_hidden = 768  # BanglaBERT hidden size
+
+        # Projection Head — same as Mamba models
+        self.proj = nn.Sequential(
+            nn.Linear(bert_hidden, bert_hidden * 2),
+            nn.GELU(),
+            nn.LayerNorm(bert_hidden * 2),
+            nn.Dropout(dropout),
+            nn.Linear(bert_hidden * 2, embed_dim),
+        )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            input_ids     : (B, L)
+            attention_mask: (B, L)
+        Returns:
+            embeddings: (B, embed_dim) L2-normalized
+        """
+        with torch.no_grad() if not self.training else torch.enable_grad():
+            outputs = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+
+        # CLS token embedding
+        cls_emb = outputs.last_hidden_state[:, 0, :]  # (B, 768)
+
+        # Project to embed_dim
+        out = self.proj(cls_emb)
+        return F.normalize(out, p=2, dim=-1)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Model factory — easy config switching for Mamba2 vs Mamba3 experiments
 # ─────────────────────────────────────────────────────────────────────────────
 def build_model(config: dict) -> BanglaDialectEmbeddingModel:

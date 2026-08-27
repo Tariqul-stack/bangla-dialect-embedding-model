@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from src.dataset import build_dataloaders
 from src.tokenizer import get_tokenizer
-from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss, TripletLoss
+from src.model import BanglaDialectEmbeddingModel, ContrastiveLoss, TripletLoss, BanglaBERTBaseline
 
 
 # ──────────────────────────────────────────────
@@ -73,20 +73,29 @@ def train():
         seed         = config["training"]["seed"],
     )
 
-    # 5. Model
+        # 5. Model
     model_cfg = config.get('model', {})
-    model = BanglaDialectEmbeddingModel(
-        vocab_size  = model_cfg.get('vocab_size', 101975),
-        d_model     = model_cfg.get('d_model', 128),
-        n_layers    = model_cfg.get('n_layers', 2),
-        embed_dim   = model_cfg.get('embed_dim', 128),
-        d_state     = model_cfg.get('d_state', 16),
-        d_conv      = model_cfg.get('d_conv', 4),
-        expand      = model_cfg.get('expand', 2),
-        headdim     = model_cfg.get('headdim', 64),
-        dropout     = model_cfg.get('dropout', 0.1),
-        architecture = model_cfg.get('architecture', 'mamba2'),
-    ).to(device)
+    architecture = model_cfg.get('architecture', 'mamba2')
+
+    if architecture == 'banglabert':
+        model = BanglaBERTBaseline(
+            embed_dim   = model_cfg.get('embed_dim', 128),
+            dropout     = model_cfg.get('dropout', 0.1),
+            freeze_bert = model_cfg.get('freeze_bert', True),
+        ).to(device)
+    else:
+        model = BanglaDialectEmbeddingModel(
+            vocab_size   = model_cfg.get('vocab_size', 101975),
+            d_model      = model_cfg.get('d_model', 128),
+            n_layers     = model_cfg.get('n_layers', 2),
+            embed_dim    = model_cfg.get('embed_dim', 128),
+            d_state      = model_cfg.get('d_state', 16),
+            d_conv       = model_cfg.get('d_conv', 4),
+            expand       = model_cfg.get('expand', 2),
+            headdim      = model_cfg.get('headdim', 64),
+            dropout      = model_cfg.get('dropout', 0.1),
+            architecture = architecture,
+        ).to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # 6. Loss & Optimizer
