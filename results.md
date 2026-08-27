@@ -55,8 +55,15 @@
 | Best Epoch | 27 |
 | Parameters | 13,418,752 |
 
-Note: Mamba1 and Mamba2 show similar results in pure-PyTorch fallback mode.
-Architectural differences will be more pronounced with real CUDA kernels on RunPod A100.
+## Experiment 7: BanglaBERT + Triplet Loss (30 epochs)
+| Metric | Score |
+|--------|-------|
+| Positive Similarity | 0.8671 |
+| Negative Similarity | -0.0029 |
+| Similarity Gap | 0.8700 |
+| Best Val Loss | 0.2501 |
+| Best Epoch | 30 |
+| Parameters | 165,777,536 |
 
 ## Ablation Study — Loss Function Comparison (Mamba2)
 | Loss Function | Gap | Val Loss | Winner |
@@ -65,23 +72,25 @@ Architectural differences will be more pronounced with real CUDA kernels on RunP
 | Triplet Loss | 0.8873 | 0.2452 |
 
 ## Architecture Comparison (Triplet Loss, 30 epochs)
-| Architecture | Gap | Val Loss | Speed | Parameters |
-|--------------|-----|----------|-------|------------|
-| Mamba1 | 0.8873 | 0.2452 | ~31s/ep | 13.4M |
-| Mamba2 | 0.8873 | 0.2452 | ~31s/ep | 13.4M |
-| Mamba3 | 0.8886 | 0.2440 | ~50s/ep | 13.4M |
+| Architecture | Gap | Val Loss | Parameters | Speed |
+|--------------|-----|----------|------------|-------|
+| SSM Placeholder | 0.4843 | 0.1495 | — | — |
+| BanglaBERT | 0.8700 | 0.2501 | 165.7M | ~93s/ep |
+| Mamba1 | 0.8873 | 0.2452 | 13.4M | ~31s/ep |
+| Mamba2 | 0.8873 | 0.2452 | 13.4M | ~31s/ep |
+| Mamba3 | 0.8886 | 0.2440 | 13.4M | ~50s/ep |
 
 ## Per-dialect Similarity — Full Comparison
-| Dialect | Placeholder | Mamba2+NT-Xent | Mamba2+Triplet | Mamba3+Triplet | Mamba1+Triplet |
-|---------|-------------|----------------|----------------|----------------|----------------|
+| Dialect | Placeholder | BanglaBERT | Mamba1 | Mamba2 | Mamba3 |
+|---------|-------------|------------|--------|--------|--------|
 | Standard | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
-| Sylheti | 0.9453 | 0.7175 | 0.8923 | 0.8807 | 0.8923 |
-| Barishal | 0.9571 | 0.7621 | 0.8848 | 0.8870 | 0.8848 |
-| Chittagong | 0.9302 | 0.7031 | 0.8595 | 0.8666 | 0.8595 |
-| Mymensingh | 0.9396 | 0.7150 | 0.8297 | 0.8171 | 0.8297 |
-| Rangpur | 0.9189 | 0.6198 | 0.7855 | 0.7853 | 0.7855 |
-| Rajshahi | 0.8746 | 0.6011 | 0.7211 | 0.7196 | 0.7211 |
-| Rakhain | 0.8327 | 0.1438 | 0.3010 | 0.3279 | 0.3010 |
+| Sylheti | 0.9453 | 0.8152 | 0.8923 | 0.8923 | 0.8807 |
+| Barishal | 0.9571 | 0.8552 | 0.8848 | 0.8848 | 0.8870 |
+| Chittagong | 0.9302 | 0.7802 | 0.8595 | 0.8595 | 0.8666 |
+| Mymensingh | 0.9396 | 0.8086 | 0.8297 | 0.8297 | 0.8171 |
+| Rangpur | 0.9189 | 0.6825 | 0.7855 | 0.7855 | 0.7853 |
+| Rajshahi | 0.8746 | 0.7706 | 0.7211 | 0.7211 | 0.7196 |
+| Rakhain | 0.8327 | 0.2554 | 0.3010 | 0.3010 | 0.3279 |
 
 ## Overall Progress
 | Experiment | Gap | Improvement vs Baseline |
@@ -89,19 +98,20 @@ Architectural differences will be more pronounced with real CUDA kernels on RunP
 | SSM Placeholder | 0.4843 | — |
 | Mamba2 + NT-Xent 10ep | 0.7949 | +64% |
 | Mamba2 + NT-Xent 30ep | 0.8086 | +67% |
-| Mamba1 + Triplet 30ep | 0.8873 | +83% |
-| Mamba2 + Triplet 30ep | 0.8873 | +83% |
-| Mamba3 + Triplet 30ep | 0.8886 | +83.5% |
+| BanglaBERT + Triplet | 0.8700 | +80% |
+| Mamba1 + Triplet | 0.8873 | +83% |
+| Mamba2 + Triplet | 0.8873 | +83% |
+| Mamba3 + Triplet | 0.8886 | +83.5% |
 
 ## Key Findings
-- All SSM architectures significantly outperform placeholder baseline (+83%)
-- Triplet Loss outperforms NT-Xent on current small dataset (7,703 samples)
 - Mamba3 achieves best overall gap (0.8886) with best negative separation (-0.0021)
-- Mamba1 and Mamba2 show identical results in fallback mode
-- Mamba3 is ~60% slower per epoch than Mamba1/Mamba2
-- Rakhain remains lowest due to linguistic distance from Standard Bangla
+- All Mamba models outperform BanglaBERT despite being 12x smaller (13.4M vs 165.7M)
+- Triplet Loss outperforms NT-Xent on current small dataset
+- Mamba1 and Mamba2 show identical results in pure-PyTorch fallback mode
+- Mamba3 is ~60% slower per epoch but achieves best results
+- Rajshahi is the only dialect where BanglaBERT outperforms Mamba models
+- Rakhain scores lowest due to linguistic distance from Standard Bangla
 
 ## Next Steps
-- BanglaBERT baseline experiment
-- Retrain with new dataset
+- Gemma2 baseline experiment
 - RunPod A100 — Real Mamba2/Mamba3 final run
