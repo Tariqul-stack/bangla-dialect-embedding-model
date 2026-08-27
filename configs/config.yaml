@@ -11,7 +11,7 @@ model:
   architecture: "mamba2"
   freeze_bert: true       
   freeze_gemma: true          
-  gemma_model: "google/gemma-2-2b"  
+  gemma_model: "google/gemma-2-2b-it"
 
 training:
   batch_size: 16
