@@ -28,6 +28,115 @@ except ImportError:
     MAMBA2_AVAILABLE = False
     print("[model] ✗ mamba-ssm not found — using pure-PyTorch Mamba2 fallback.")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure-PyTorch Mamba1 Fallback
+# ─────────────────────────────────────────────────────────────────────────────
+class Mamba1Fallback(nn.Module):
+    """
+    Pure-PyTorch Mamba1 implementation.
+
+    Key differences from Mamba2:
+    1. No multi-head SSD — simpler SSM
+    2. Sequential-style scan (no parallel SSD)
+    3. No headdim parameter
+    4. Original Mamba (2023) design
+
+    Args:
+        d_model : model dimension
+        d_state : SSM state size (default 16)
+        d_conv  : depthwise conv kernel (default 4)
+        expand  : expansion factor (default 2)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        d_state: int = 16,
+        d_conv: int = 4,
+        expand: int = 2,
+        **kwargs,   # headdim ignore করো Mamba1 এ নেই
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state
+        self.d_inner = int(expand * d_model)
+
+        # Input projection
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+
+        # Depthwise causal conv
+        self.conv1d = nn.Conv1d(
+            in_channels=self.d_inner,
+            out_channels=self.d_inner,
+            kernel_size=d_conv,
+            padding=d_conv - 1,
+            groups=self.d_inner,
+            bias=True,
+        )
+
+        # SSM projections
+        dt_rank = math.ceil(d_model / 16)
+        self.dt_rank = dt_rank
+        self.x_proj = nn.Linear(
+            self.d_inner,
+            dt_rank + d_state * 2,
+            bias=False
+        )
+        self.dt_proj = nn.Linear(dt_rank, self.d_inner, bias=True)
+
+        # A: fixed diagonal (not multi-head like Mamba2)
+        A = torch.arange(1, d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
+        self.A_log = nn.Parameter(torch.log(A))
+
+        # D skip
+        self.D = nn.Parameter(torch.ones(self.d_inner))
+
+        # Output projection
+        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, L, D) → (B, L, D)"""
+        B, L, D = x.shape
+
+        # 1. Split
+        xz = self.in_proj(x)
+        x_in, z = xz.chunk(2, dim=-1)
+
+        # 2. Causal conv
+        x_conv = x_in.transpose(1, 2)
+        x_conv = self.conv1d(x_conv)[..., :L]
+        x_conv = F.silu(x_conv).transpose(1, 2)
+
+        # 3. SSM params
+        x_dbl = self.x_proj(x_conv)
+        dt, B_ssm, C_ssm = torch.split(
+            x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1
+        )
+        dt = F.softplus(self.dt_proj(dt))
+
+        # 4. Discretize A (ZOH — same as Mamba2 but simpler)
+        A = -torch.exp(self.A_log.float())
+        dt_exp = torch.einsum('bld,ds->blds', dt, A)
+        A_bar = torch.exp(dt_exp)
+
+        # 5. Scan (simpler than Mamba2 — no parallel SSD)
+        B_bar = torch.einsum('bld,bls->blds', dt, B_ssm)
+        u = x_conv
+        Bu = torch.einsum('bld,blds->blds', u, B_bar)
+
+        log_A_cumsum = torch.cumsum(
+            torch.log(A_bar.clamp(min=1e-8)), dim=1
+        )
+        A_cumprod = torch.exp(log_A_cumsum)
+        Bu_norm = Bu / A_cumprod.clamp(min=1e-8)
+        h = torch.cumsum(Bu_norm, dim=1) * A_cumprod
+
+        # 6. Output
+        y = torch.einsum('bls,blds->bld', C_ssm, h)
+        y = y + self.D.unsqueeze(0).unsqueeze(0) * u
+        y = y * F.silu(z)
+        y = self.out_proj(y)
+        return y
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pure-PyTorch Mamba2 Fallback
@@ -332,6 +441,39 @@ class Mamba3Fallback(nn.Module):
         y = y * F.silu(z)
         y = self.out_proj(y)
         return y
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mamba1 Block (residual + norm wrapper)
+# ─────────────────────────────────────────────────────────────────────────────
+class Mamba1Block(nn.Module):
+    """
+    Pre-norm residual block wrapping Mamba1Fallback.
+
+    Architecture:
+        y = x + Dropout(Mamba1(LayerNorm(x)))
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        d_state: int = 16,
+        d_conv: int = 4,
+        expand: int = 2,
+        headdim: int = 64,   # ignored, kept for API compatibility
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.ssm = Mamba1Fallback(
+            d_model=d_model,
+            d_state=d_state,
+            d_conv=d_conv,
+            expand=expand,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.dropout(self.ssm(self.norm(x)))
     
 # ─────────────────────────────────────────────────────────────────────────────
 # Mamba2 Block (residual + norm wrapper)
@@ -516,19 +658,25 @@ class BanglaDialectEmbeddingModel(nn.Module):
         self.emb_dropout = nn.Dropout(dropout)
         self.emb_norm = nn.LayerNorm(d_model)
 
-        # SSM blocks — Mamba2 or Mamba3
-        block_class = Mamba3Block if architecture == "mamba3" else Mamba2Block
+        # SSM blocks — Mamba1, Mamba2 or Mamba3
+        if architecture == "mamba3":
+            block_class = Mamba3Block
+        elif architecture == "mamba1":
+            block_class = Mamba1Block
+        else:
+            block_class = Mamba2Block
+
         self.blocks = nn.ModuleList([
-        block_class(
-        d_model=d_model,
-        d_state=d_state,
-        d_conv=d_conv,
-        expand=expand,
-        headdim=headdim,
-        dropout=dropout,
-    )
-    for _ in range(n_layers)
-])
+            block_class(
+                d_model=d_model,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+                headdim=headdim,
+                dropout=dropout,
+            )
+            for _ in range(n_layers)
+        ])
 
         # Final layer norm before pooling
         self.final_norm = nn.LayerNorm(d_model)
