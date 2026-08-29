@@ -8,8 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.dataset import build_dataloaders
 from src.tokenizer import get_tokenizer
-from src.model import BanglaDialectEmbeddingModel, BanglaBERTBaseline, Gemma2Baseline
-
+from src.model import BanglaDialectEmbeddingModel, BanglaBERTBaseline, Gemma2Baseline, StudentDialectModel
 
 # ──────────────────────────────────────────────
 # Config loader
@@ -165,6 +164,15 @@ def evaluate():
             freeze_gemma = model_cfg.get('freeze_gemma', True),
             model_name   = model_cfg.get('gemma_model', 'google/gemma-2-2b'),
         ).to(device)
+
+    elif architecture == 'student':
+        model = StudentDialectModel(
+            vocab_size = model_cfg.get('vocab_size', 101975),
+            d_model    = model_cfg.get('student_d_model', 64),
+            n_layers   = model_cfg.get('student_n_layers', 2),
+            embed_dim  = model_cfg.get('embed_dim', 128),
+            dropout    = model_cfg.get('dropout', 0.1),
+        ).to(device)    
     else:
         model = BanglaDialectEmbeddingModel(
             vocab_size   = model_cfg.get('vocab_size', 101975),

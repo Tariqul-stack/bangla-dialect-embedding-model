@@ -1006,6 +1006,105 @@ class Gemma2Baseline(nn.Module):
         return F.normalize(out, p=2, dim=-1)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Student Model for Knowledge Distillation
+# ─────────────────────────────────────────────────────────────────────────────
+class StudentDialectModel(nn.Module):
+    """
+    Lightweight student model for Knowledge Distillation.
+    
+    Teacher: Mamba3 (13.4M parameters, d_model=128, n_layers=2)
+    Student: Simplified SSM (d_model=64, n_layers=2) → ~4MB
+    
+    Training:
+        Loss = Triplet Loss + MSE(student_emb, teacher_emb)
+    
+    Args:
+        vocab_size  : tokenizer vocab size (default 101,975)
+        d_model     : student model dimension (default 64)
+        n_layers    : number of SSM blocks (default 2)
+        embed_dim   : output embedding dimension (default 128)
+        dropout     : dropout rate (default 0.1)
+        pad_token_id: padding token id (default 0)
+    """
+
+    def __init__(
+        self,
+        vocab_size: int = 101_975,
+        d_model: int = 64,
+        n_layers: int = 2,
+        embed_dim: int = 128,
+        dropout: float = 0.1,
+        max_seq_len: int = 512,
+        pad_token_id: int = 0,
+    ):
+        super().__init__()
+        self.pad_token_id = pad_token_id
+        self.d_model = d_model
+
+        # Embeddings
+        self.token_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_token_id)
+        self.pos_emb = nn.Embedding(max_seq_len, d_model)
+        self.emb_dropout = nn.Dropout(dropout)
+        self.emb_norm = nn.LayerNorm(d_model)
+
+        # Simplified SSM blocks (Mamba1 style — lighter)
+        self.blocks = nn.ModuleList([
+            Mamba1Block(
+                d_model=d_model,
+                d_state=16,
+                d_conv=4,
+                expand=2,
+                dropout=dropout,
+            )
+            for _ in range(n_layers)
+        ])
+
+        self.final_norm = nn.LayerNorm(d_model)
+
+        # Projection Head
+        self.proj = ProjectionHead(d_model, embed_dim, dropout)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.normal_(self.token_emb.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.trunc_normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def _masked_mean_pool(self, hidden, input_ids):
+        mask = (input_ids != self.pad_token_id).float().unsqueeze(-1)
+        summed = (hidden * mask).sum(dim=1)
+        lengths = mask.sum(dim=1).clamp(min=1e-9)
+        return summed / lengths
+
+    def forward(self, input_ids, attention_mask=None):
+        B, L = input_ids.shape
+        device = input_ids.device
+
+        positions = torch.arange(L, device=device).unsqueeze(0).expand(B, -1)
+        x = self.token_emb(input_ids) + self.pos_emb(positions)
+        x = self.emb_norm(self.emb_dropout(x))
+
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.final_norm(x)
+
+        if attention_mask is not None:
+            mask = attention_mask.float().unsqueeze(-1)
+            summed = (x * mask).sum(dim=1)
+            lengths = mask.sum(dim=1).clamp(min=1e-9)
+            pooled = summed / lengths
+        else:
+            pooled = self._masked_mean_pool(x, input_ids)
+
+        return self.proj(pooled)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Model factory — easy config switching for Mamba2 vs Mamba3 experiments
 # ─────────────────────────────────────────────────────────────────────────────
 def build_model(config: dict) -> BanglaDialectEmbeddingModel:

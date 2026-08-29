@@ -11,7 +11,17 @@ model:
   architecture: "mamba2"
   freeze_bert: true       
   freeze_gemma: true          
-  gemma_model: "google/gemma-2-2b-it"
+  gemma_model: "google/gemma-2-2b-it"   
+  student_d_model: 64     
+  student_n_layers: 2  
+
+distillation:
+  alpha: 0.5              # task_loss + alpha * distill_loss
+  student_d_model: 64     # student model dimension
+  student_n_layers: 2     # student SSM blocks
+  epochs: 30
+  teacher_ckpt: "checkpoints/teacher_mamba3.pt"
+  student_ckpt: "checkpoints/student_model.pt"
 
 training:
   batch_size: 16
