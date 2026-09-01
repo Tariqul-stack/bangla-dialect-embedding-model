@@ -123,6 +123,74 @@ def evaluate_per_dialect(model, test_loader, device):
         for dialect, sims in dialect_sims.items()
     }
 
+# ──────────────────────────────────────────────
+# Recall@K Evaluation
+# ──────────────────────────────────────────────
+
+def evaluate_recall_at_k(model, test_loader, device, k_values=[1, 5, 10]):
+    """
+    Recall@K measures: given a dialect sentence, is its correct
+    Standard Bangla match found within the top-K most similar
+    candidates (out of all standard sentences in the test set)?
+
+    This simulates a real retrieval/search scenario.
+
+    Returns:
+        recall_scores: dict {k: recall_value}
+        mrr: Mean Reciprocal Rank
+    """
+    model.eval()
+
+    all_dialect_embs = []
+    all_standard_embs = []
+
+    with torch.no_grad():
+        for batch in test_loader:
+            input_ids      = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            standard_ids   = batch["standard_ids"].to(device)
+            std_mask       = (standard_ids != 0).long()
+
+            dialect_emb  = model(input_ids, attention_mask)
+            standard_emb = model(standard_ids, std_mask)
+
+            all_dialect_embs.append(F.normalize(dialect_emb, dim=-1))
+            all_standard_embs.append(F.normalize(standard_emb, dim=-1))
+
+    # Concatenate all embeddings from the test set
+    dialect_embs  = torch.cat(all_dialect_embs, dim=0)   # (N, D)
+    standard_embs = torch.cat(all_standard_embs, dim=0)  # (N, D)
+
+    N = dialect_embs.size(0)
+
+    # Similarity matrix: each dialect sentence vs ALL standard sentences
+    sim_matrix = dialect_embs @ standard_embs.T  # (N, N)
+
+    # Correct match for query i is standard_embs[i] (same index = same sentence pair)
+    correct_indices = torch.arange(N, device=device)
+
+    # Rank each row (higher similarity = better rank)
+    # argsort descending gives indices sorted by similarity
+    ranked_indices = torch.argsort(sim_matrix, dim=1, descending=True)  # (N, N)
+
+    # Find the rank (position) of the correct answer for each query
+    ranks = []
+    for i in range(N):
+        rank_position = (ranked_indices[i] == correct_indices[i]).nonzero(as_tuple=True)[0].item()
+        ranks.append(rank_position + 1)  # 1-indexed rank
+
+    ranks = torch.tensor(ranks, dtype=torch.float32)
+
+    # Recall@K for each K
+    recall_scores = {}
+    for k in k_values:
+        hits = (ranks <= k).float().mean().item()
+        recall_scores[k] = hits
+
+    # Mean Reciprocal Rank (MRR)
+    mrr = (1.0 / ranks).mean().item()
+
+    return recall_scores, mrr
 
 # ──────────────────────────────────────────────
 # Main
@@ -216,6 +284,18 @@ def evaluate():
 
     print()
 
+    # ── Recall@K evaluation ──────────────────────
+    print("=" * 45)
+    print("        RETRIEVAL EVALUATION (Recall@K)")
+    print("=" * 45)
+    recall_scores, mrr = evaluate_recall_at_k(model, test_loader, device, k_values=[1, 5, 10])
+
+    for k, score in recall_scores.items():
+        print(f"  Recall@{k:<3}: {score:.4f}  ({score*100:.1f}%)")
+
+    print(f"  MRR      : {mrr:.4f}")
+    print("=" * 45)
+    print()
 
 if __name__ == "__main__":
     evaluate()
