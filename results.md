@@ -1,125 +1,54 @@
-# Bangla Dialect Embedding Model — Results
+## Hardware Deployment Benchmark
 
-## Experiment 1: SSM Placeholder (Baseline)
+### Model Compression
+| Model | Size (FP32) | Size (INT8) | Parameters |
+|-------|-------------|-------------|------------|
+| Teacher (Mamba3) | 161.4 MB | 52.9 MB | 13.4M |
+| Student (KD) | 79.8 MB | 26.4 MB | 6.6M |
+
+Student vs Teacher: 50% smaller parameters, 1.2% gap reduction (0.8886 → 0.8782)
+
+### Platform ① Kaggle CPU-only
+| Model | Format | Avg (ms) | P95 (ms) |
+|-------|--------|----------|----------|
+| Teacher | ONNX FP32 | 41.1 | 48.5 |
+| Teacher | PyTorch INT8 | 34.1 | 36.2 |
+| Student | ONNX FP32 | 9.3 | 9.9 |
+| Student | PyTorch INT8 | 13.0 | 14.2 |
+
+### Platform ② Docker Simulation
+| Config | Model | Avg (ms) | P95 (ms) |
+|--------|-------|----------|----------|
+| RPi5-class (4c/4GB) | Teacher | 74.5 | 98.7 |
+| RPi5-class (4c/4GB) | Student | 16.2 | 61.2 |
+| IoT-class (2c/2GB) | Teacher | 208.6 | 286.0 |
+| IoT-class (2c/2GB) | Student | 49.5 | 93.6 |
+| Edge server (8c/8GB) | Teacher | 37.5 | 49.1 |
+| Edge server (8c/8GB) | Student | 8.9 | 13.3 |
+
+### Platform ③ Apple M1 (Real NPU Hardware)
+| Compute Mode | Avg (ms) | P95 (ms) |
+|--------------|----------|----------|
+| CPU Only | 7.08 | 7.63 |
+| CPU + GPU | 4.73 | 5.37 |
+| CPU + GPU + Neural Engine | 4.82 | 5.40 |
+
+
+## Retrieval Evaluation — Recall@K (Mamba3 + Triplet, 30 epochs)
 | Metric | Score |
 |--------|-------|
-| Positive Similarity | 0.9555 |
-| Negative Similarity | 0.4711 |
-| Similarity Gap | 0.4843 |
-| Best Val Loss | 0.1495 |
+| Recall@1 | 0.5590 (55.9%) |
+| Recall@5 | 0.7160 (71.6%) |
+| Recall@10 | 0.7795 (78.0%) |
+| MRR | 0.6340 |
 
-## Experiment 2: Mamba2 + NT-Xent (10 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.7919 |
-| Negative Similarity | -0.0030 |
-| Similarity Gap | 0.7949 |
-| Best Val Loss | 0.4512 |
-| Best Epoch | 10 |
+Recall@K measures whether the correct Standard Bangla match
+is found within the top-K most similar candidates out of all
+771 test set candidates — simulating a real retrieval scenario.
 
-## Experiment 3: Mamba2 + NT-Xent (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8084 |
-| Negative Similarity | -0.0001 |
-| Similarity Gap | 0.8086 |
-| Best Val Loss | 0.3816 |
-| Best Epoch | 24 |
-
-## Experiment 4: Mamba2 + Triplet Loss (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8871 |
-| Negative Similarity | -0.0003 |
-| Similarity Gap | 0.8873 |
-| Best Val Loss | 0.2452 |
-| Best Epoch | 27 |
-
-## Experiment 5: Mamba3 + Triplet Loss (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8865 |
-| Negative Similarity | -0.0021 |
-| Similarity Gap | 0.8886 |
-| Best Val Loss | 0.2440 |
-| Best Epoch | 27 |
-| Parameters | 13,444,480 |
-
-## Experiment 6: Mamba1 + Triplet Loss (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8871 |
-| Negative Similarity | -0.0003 |
-| Similarity Gap | 0.8873 |
-| Best Val Loss | 0.2452 |
-| Best Epoch | 27 |
-| Parameters | 13,418,752 |
-
-## Experiment 7: BanglaBERT + Triplet Loss (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8671 |
-| Negative Similarity | -0.0029 |
-| Similarity Gap | 0.8700 |
-| Best Val Loss | 0.2501 |
-| Best Epoch | 30 |
-| Parameters | 165,777,536 |
-
-## Experiment 8: Gemma2-2B-it + Triplet Loss (30 epochs)
-| Metric | Score |
-|--------|-------|
-| Positive Similarity | 0.8039 |
-| Negative Similarity | -0.0011 |
-| Similarity Gap | 0.8049 |
-| Best Val Loss | 0.2818 |
-| Best Epoch | 30 |
-| Parameters | 2,617,147,136 |
-
-## Ablation Study — Loss Function Comparison (Mamba2)
-| Loss Function | Gap | Val Loss | Winner |
-|---------------|-----|----------|--------|
-| NT-Xent | 0.8086 | 0.3816 | — |
-| Triplet Loss | 0.8873 | 0.2452 |
-
-## Final Architecture Comparison (Triplet Loss, 30 epochs)
-| Architecture | Gap | Val Loss | Parameters | Speed |
-|--------------|-----|----------|------------|-------|
-| SSM Placeholder | 0.4843 | 0.1495 | — | — |
-| Gemma2-2B-it | 0.8049 | 0.2818 | 2.6B | ~7.5min/ep |
-| BanglaBERT | 0.8700 | 0.2501 | 165.7M | ~93s/ep |
-| Mamba1 | 0.8873 | 0.2452 | 13.4M | ~31s/ep |
-| Mamba2 | 0.8873 | 0.2452 | 13.4M | ~31s/ep |
-| Mamba3 | 0.8886 | 0.2440 | 13.4M | ~50s/ep | Best |
-
-## Per-dialect Similarity — Full Comparison
-| Dialect | Placeholder | Gemma2 | BanglaBERT | Mamba1 | Mamba2 | Mamba3 |
-|---------|-------------|--------|------------|--------|--------|--------|
-| Standard | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
-| Sylheti | 0.9453 | 0.7910 | 0.8152 | 0.8923 | 0.8923 | 0.8807 |
-| Barishal | 0.9571 | 0.7772 | 0.8552 | 0.8848 | 0.8848 | 0.8870 |
-| Chittagong | 0.9302 | 0.7343 | 0.7802 | 0.8595 | 0.8595 | 0.8666 |
-| Mymensingh | 0.9396 | 0.6342 | 0.8086 | 0.8297 | 0.8297 | 0.8171 |
-| Rangpur | 0.9189 | 0.5941 | 0.6825 | 0.7855 | 0.7855 | 0.7853 |
-| Rajshahi | 0.8746 | 0.5442 | 0.7706 | 0.7211 | 0.7211 | 0.7196 |
-| Rakhain | 0.8327 | 0.2806 | 0.2554 | 0.3010 | 0.3010 | 0.3279 |
-
-## Overall Progress
-| Experiment | Gap | Improvement vs Baseline |
-|------------|-----|------------------------|
-| SSM Placeholder | 0.4843 | — |
-| Gemma2-2B + Triplet | 0.8049 | +66% |
-| Mamba2 + NT-Xent 10ep | 0.7949 | +64% |
-| Mamba2 + NT-Xent 30ep | 0.8086 | +67% |
-| BanglaBERT + Triplet | 0.8700 | +80% |
-| Mamba1 + Triplet | 0.8873 | +83% |
-| Mamba2 + Triplet | 0.8873 | +83% |
-| Mamba3 + Triplet | 0.8886 | +83.5% |
-
-## Key Findings
-- Mamba3 achieves best overall gap (0.8886) — best model
-- Mamba models outperform BanglaBERT by 2.2% with 12x fewer parameters
-- Mamba models outperform Gemma2-2B by 10.3% with 194x fewer parameters
-- Triplet Loss outperforms NT-Xent on current small dataset
-- Mamba1 and Mamba2 show identical results in pure-PyTorch fallback mode
-- Mamba3 is ~60% slower than Mamba2 but achieves best results
-- Rakhain scores lowest due to linguistic distance from Standard Bangla
+### Key Hardware Findings
+- Student model (4MB-27MB range) runs efficiently on all tested platforms
+- Real-time capable even on 2-core/2GB IoT-class constrained hardware (49.5ms)
+- Apple M1 achieves sub-5ms inference with GPU/ANE acceleration
+- For this model scale, GPU acceleration matches or exceeds ANE performance
+- Complete offline deployment feasible with no cloud dependency
